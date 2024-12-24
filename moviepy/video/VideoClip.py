@@ -715,6 +715,69 @@ class VideoClip(Clip):
         return post_array
 
     def blit_on(self, picture, t):
+        hf, wf = picture.shape[:2]
+        # print(f"wf:{wf}, hf:{hf}")
+        ct = t - self.start  # clip time
+
+        # GET IMAGE AND MASK IF ANY
+        img = self.get_frame(ct)  # Get the image frame at time t
+        im_img = img.astype("uint8")
+
+        if self.mask is not None:
+            mask = (self.mask.get_frame(ct) * 255).astype("uint8")
+        else:
+            mask = None
+
+        if mask is not None:
+            # Ensure the mask size matches the image size
+            if im_img.shape[:2] != mask.shape:
+                bg_size = (max(im_img.shape[1], mask.shape[1]), max(im_img.shape[0], mask.shape[0]))
+                # Resize or pad the image and mask to the new background size
+                im_img_bg = np.zeros((bg_size[1], bg_size[0], 3), dtype=np.uint8)
+                im_img_bg[:im_img.shape[0], :im_img.shape[1]] = im_img
+                im_img = im_img_bg
+
+                mask_bg = np.zeros((bg_size[1], bg_size[0]), dtype=np.uint8)
+                mask_bg[:mask.shape[0], :mask.shape[1]] = mask
+                mask = mask_bg
+
+        hi, wi = im_img.shape[0], im_img.shape[1]
+        # print(f"wi:{wi},hi:{hi}")
+        # SET POSITION
+        pos = self.pos(ct)
+        # pos = (0,0) # 测试用
+        # print(f"pos:{pos}")
+        # preprocess short writings of the position
+        if isinstance(pos, str):
+            pos = {
+                "center": ["center", "center"],
+                "left": ["left", "center"],
+                "right": ["right", "center"],
+                "top": ["center", "top"],
+                "bottom": ["center", "bottom"],
+            }[pos]
+        else:
+            pos = list(pos)
+
+        # is the position relative (given in % of the clip's size) ?
+        if self.relative_pos:
+            for i, dim in enumerate([wf, hf]):
+                if not isinstance(pos[i], str):
+                    pos[i] = int(dim * pos[i])
+        # print(f"relative:{pos}")
+        if isinstance(pos[0], str):
+            D = {"left": 0, "center": (wf - wi) // 2, "right": wf - wi}
+            pos[0] = D[pos[0]]
+
+        if isinstance(pos[1], str):
+            D = {"top": 0, "center": (hf - hi) // 2, "bottom": hf - hi}
+            pos[1] = D[pos[1]]
+
+        pos = list(map(int, pos))
+        # print(f"map:{pos}")
+        return blit(im_img, picture, pos, mask)
+    
+    def blit_on_pillow(self, picture, t):
         """Returns the result of the blit of the clip's frame at time `t`
         on the given `picture`, the position of the clip being given
         by the clip's ``pos`` attribute. Meant for compositing.

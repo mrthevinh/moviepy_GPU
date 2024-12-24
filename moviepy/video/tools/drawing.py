@@ -4,8 +4,33 @@ methods that are difficult to do with the existing Python libraries.
 
 import numpy as np
 
+def blit(img, picture, pos, mask=None):
+    """Blit the image onto the target picture at the given position."""
+    # Get image dimensions
+    hi, wi = img.shape[:2]
 
-def blit(im1, im2, pos=None, mask=None):
+    # Position the image
+    x, y = pos
+
+    # Make sure the target position is within the bounds of the picture
+    if y < 0 or y + hi > picture.shape[0] or x < 0 or x + wi > picture.shape[1]:
+        raise ValueError("Blit position is out of bounds")
+
+    # If mask is provided, use it to blend the image onto the picture
+    if mask is not None:
+        for i in range(3):  # Iterate over RGB channels
+            picture[y:y+hi, x:x+wi, i] = np.where(
+                mask[:hi, :wi] > 0,
+                img[:hi, :wi, i],  # If mask is greater than 0, use img's pixel
+                picture[y:y+hi, x:x+wi, i]  # Else keep the original picture's pixel
+            )
+    else:
+        # If no mask, simply replace the pixels
+        picture[y:y+hi, x:x+wi] = img[:hi, :wi]
+
+    return picture
+
+def blit_pillow(im1, im2, pos=None, mask=None):
     """Blit an image over another.
 
     Blits ``im1`` on ``im2`` as position ``pos=(x,y)``, using the
