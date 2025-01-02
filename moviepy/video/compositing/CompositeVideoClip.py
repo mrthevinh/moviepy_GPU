@@ -8,7 +8,7 @@ from PIL import Image
 from moviepy.audio.AudioClip import CompositeAudioClip
 from moviepy.video.VideoClip import ColorClip, VideoClip
 
-
+import torch
 class CompositeVideoClip(VideoClip):
     """
     A VideoClip made of other videoclips displayed together. This is the
@@ -117,19 +117,35 @@ class CompositeVideoClip(VideoClip):
             )
 
     def frame_function(self, t):
-        """The clips playing at time `t` are blitted over one another."""
-        frame = self.bg.get_frame(t).astype("uint8")
-        im = Image.fromarray(frame)
-
+        """The clips playing at time `t` are blitted over one another using PyTorch tensors and GPU acceleration."""
+        # 获取背景帧并检查是否为张量
+        frame = self.bg.get_frame(t)
+        if not isinstance(frame, torch.Tensor):
+            frame = torch.tensor(frame, dtype=torch.uint8, device='cuda')
+    
         if self.bg.mask is not None:
+            # 获取掩码并检查是否为张量
             frame_mask = self.bg.mask.get_frame(t)
-            im_mask = Image.fromarray(255 * frame_mask).convert("L")
-            im.putalpha(im_mask)
+            if not isinstance(frame_mask, torch.Tensor):
+                frame_mask = torch.tensor(frame_mask, dtype=torch.float32, device='cuda')  # 使用 float32
+            else:
+                frame_mask = frame_mask.to(device='cuda', dtype=torch.float32)
 
+            frame_mask = (frame_mask * 255).to(torch.uint8)  # 缩放到 0-255，并转换为 uint8
+        
+            # 检查 frame 和 mask 的尺寸是否一致
+            if frame.shape[:2] != frame_mask.shape:
+                raise ValueError("Image and mask must have the same height and width")
+        
+            # 添加 alpha 通道
+            alpha_channel = frame_mask.unsqueeze(-1)  # (H, W) -> (H, W, 1)
+            frame = torch.cat((frame, alpha_channel), dim=-1)  # (H, W, 3) -> (H, W, 4)
+
+        # 遍历播放的剪辑，将它们绘制到帧上
         for clip in self.playing_clips(t):
-            im = clip.blit_on(im, t)
+            frame = clip.blit_on(frame, t)
 
-        return np.array(im)
+        return frame
 
     def playing_clips(self, t=0):
         """Returns a list of the clips in the composite clips that are

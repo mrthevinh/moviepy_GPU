@@ -15,7 +15,7 @@ import proglog
 from imageio.v2 import imread as imread_v2
 from imageio.v3 import imwrite
 from PIL import Image, ImageDraw, ImageFont
-
+import torch
 from moviepy.video.io.ffplay_previewer import ffplay_preview_video
 
 
@@ -715,39 +715,49 @@ class VideoClip(Clip):
         return post_array
 
     def blit_on(self, picture, t):
+        """Returns the result of the blit of the clip's frame at time `t`
+        on the given `picture`, the position of the clip being given
+        by the clip's ``pos`` attribute. Meant for compositing.
+        """
+        # 获取背景帧的尺寸
         hf, wf = picture.shape[:2]
-        # print(f"wf:{wf}, hf:{hf}")
-        ct = t - self.start  # clip time
+        ct = t - self.start  # 计算 clip 的时间点
 
-        # GET IMAGE AND MASK IF ANY
-        img = self.get_frame(ct)  # Get the image frame at time t
-        im_img = img.astype("uint8")
+        # 获取图像帧
+        img = self.get_frame(ct)  # 获取在时间 t 的图像帧
+        if not isinstance(img, torch.Tensor):
+            img = torch.tensor(img, dtype=torch.uint8, device="cuda")
 
+        # 获取遮罩帧
         if self.mask is not None:
-            mask = (self.mask.get_frame(ct) * 255).astype("uint8")
+            mask = self.mask.get_frame(ct)
+            if not isinstance(mask, torch.Tensor):
+                mask = torch.tensor(mask, dtype=torch.float32, device="cuda")
+            mask = (mask * 255).to(torch.uint8)  # 缩放到 0-255
         else:
             mask = None
 
+        # 调整图像和遮罩大小以匹配
         if mask is not None:
-            # Ensure the mask size matches the image size
-            if im_img.shape[:2] != mask.shape:
-                bg_size = (max(im_img.shape[1], mask.shape[1]), max(im_img.shape[0], mask.shape[0]))
-                # Resize or pad the image and mask to the new background size
-                im_img_bg = np.zeros((bg_size[1], bg_size[0], 3), dtype=np.uint8)
-                im_img_bg[:im_img.shape[0], :im_img.shape[1]] = im_img
-                im_img = im_img_bg
+            if img.shape[:2] != mask.shape:
+                bg_size = (
+                    max(img.shape[1], mask.shape[1]),
+                    max(img.shape[0], mask.shape[0]),
+                )
+                # 调整图像大小
+                img_bg = torch.zeros((bg_size[1], bg_size[0], 3), dtype=torch.uint8, device="cuda")
+                img_bg[: img.shape[0], : img.shape[1]] = img
+                img = img_bg
 
-                mask_bg = np.zeros((bg_size[1], bg_size[0]), dtype=np.uint8)
-                mask_bg[:mask.shape[0], :mask.shape[1]] = mask
+                # 调整遮罩大小
+                mask_bg = torch.zeros((bg_size[1], bg_size[0]), dtype=torch.uint8, device="cuda")
+                mask_bg[: mask.shape[0], : mask.shape[1]] = mask
                 mask = mask_bg
 
-        hi, wi = im_img.shape[0], im_img.shape[1]
-        # print(f"wi:{wi},hi:{hi}")
-        # SET POSITION
+        hi, wi = img.shape[:2]
+
+        # 确定位置
         pos = self.pos(ct)
-        # pos = (0,0) # 测试用
-        # print(f"pos:{pos}")
-        # preprocess short writings of the position
         if isinstance(pos, str):
             pos = {
                 "center": ["center", "center"],
@@ -759,12 +769,12 @@ class VideoClip(Clip):
         else:
             pos = list(pos)
 
-        # is the position relative (given in % of the clip's size) ?
+        # 如果位置是相对的（按百分比表示），计算实际位置
         if self.relative_pos:
             for i, dim in enumerate([wf, hf]):
                 if not isinstance(pos[i], str):
                     pos[i] = int(dim * pos[i])
-        # print(f"relative:{pos}")
+
         if isinstance(pos[0], str):
             D = {"left": 0, "center": (wf - wi) // 2, "right": wf - wi}
             pos[0] = D[pos[0]]
@@ -774,75 +784,8 @@ class VideoClip(Clip):
             pos[1] = D[pos[1]]
 
         pos = list(map(int, pos))
-        # print(f"map:{pos}")
-        return blit(im_img, picture, pos, mask)
-    
-    def blit_on_pillow(self, picture, t):
-        """Returns the result of the blit of the clip's frame at time `t`
-        on the given `picture`, the position of the clip being given
-        by the clip's ``pos`` attribute. Meant for compositing.
-        """
-        wf, hf = picture.size
-
-        ct = t - self.start  # clip time
-
-        # GET IMAGE AND MASK IF ANY
-        img = self.get_frame(ct).astype("uint8")
-        im_img = Image.fromarray(img)
-
-        if self.mask is not None:
-            mask = (self.mask.get_frame(ct) * 255).astype("uint8")
-            im_mask = Image.fromarray(mask).convert("L")
-
-            if im_img.size != im_mask.size:
-                bg_size = (
-                    max(im_img.size[0], im_mask.size[0]),
-                    max(im_img.size[1], im_mask.size[1]),
-                )
-
-                im_img_bg = Image.new("RGB", bg_size, "black")
-                im_img_bg.paste(im_img, (0, 0))
-
-                im_mask_bg = Image.new("L", bg_size, 0)
-                im_mask_bg.paste(im_mask, (0, 0))
-
-                im_img, im_mask = im_img_bg, im_mask_bg
-
-        else:
-            im_mask = None
-
-        wi, hi = im_img.size
-        # SET POSITION
-        pos = self.pos(ct)
-
-        # preprocess short writings of the position
-        if isinstance(pos, str):
-            pos = {
-                "center": ["center", "center"],
-                "left": ["left", "center"],
-                "right": ["right", "center"],
-                "top": ["center", "top"],
-                "bottom": ["center", "bottom"],
-            }[pos]
-        else:
-            pos = list(pos)
-
-        # is the position relative (given in % of the clip's size) ?
-        if self.relative_pos:
-            for i, dim in enumerate([wf, hf]):
-                if not isinstance(pos[i], str):
-                    pos[i] = dim * pos[i]
-
-        if isinstance(pos[0], str):
-            D = {"left": 0, "center": (wf - wi) / 2, "right": wf - wi}
-            pos[0] = D[pos[0]]
-
-        if isinstance(pos[1], str):
-            D = {"top": 0, "center": (hf - hi) / 2, "bottom": hf - hi}
-            pos[1] = D[pos[1]]
-
-        pos = map(int, pos)
-        return blit(im_img, picture, pos, mask=im_mask)
+        # 调用优化后的 blit 函数
+        return blit(img, picture, pos, mask)
 
     def with_background_color(self, size=None, color=(0, 0, 0), pos=None, opacity=None):
         """Place the clip on a colored background.

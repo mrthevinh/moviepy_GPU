@@ -11,7 +11,7 @@ from typing import TYPE_CHECKING, List
 import numpy as np
 import proglog
 
-
+import torch
 if TYPE_CHECKING:
     from moviepy.Effect import Effect
 
@@ -533,6 +533,8 @@ class Clip:
             t = frame_index / fps
 
             frame = self.get_frame(t)
+            if isinstance(frame, torch.Tensor):
+                frame = frame.cpu().numpy()
             if (dtype is not None) and (frame.dtype != dtype):
                 frame = frame.astype(dtype)
             if with_times:
