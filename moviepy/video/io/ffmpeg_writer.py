@@ -11,7 +11,7 @@ from proglog import proglog
 from moviepy.config import FFMPEG_BINARY
 from moviepy.tools import cross_platform_popen_params
 
-
+import torch
 class FFMPEG_VideoWriter:
     """A class for FFMPEG-based video writing.
 
@@ -257,13 +257,18 @@ def ffmpeg_write_video(
             logger=logger, with_times=True, fps=fps, dtype="uint8"
         ):
             if clip.mask is not None:
-                mask = 255 * clip.mask.get_frame(t)
+                mask = clip.mask.get_frame(t)
+                if isinstance(mask, torch.Tensor):
+                    mask = mask.cpu().numpy() * 255
+                else:
+                    mask = mask * 255
                 if mask.dtype != "uint8":
                     mask = mask.astype("uint8")
-                frame = np.dstack([frame, mask])
-
+                frame = np.dstack([frame,mask])
+                # im = Image.fromarray(frame)
+                # im.save("test_im.png")
+            
             writer.write_frame(frame)
-
     if write_logfile:
         logfile.close()
     logger(message="MoviePy - Done !")

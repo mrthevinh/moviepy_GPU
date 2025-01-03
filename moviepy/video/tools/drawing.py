@@ -3,46 +3,47 @@ methods that are difficult to do with the existing Python libraries.
 """
 
 import numpy as np
+import torch
 
 def blit(img, picture, pos, mask=None):
-    """Blit the image onto the target picture at the given position."""
-    # Get image dimensions
+    """Blit the image onto the target picture at the given position using PyTorch tensors."""
+    # 获取图像的高度和宽度
     hi, wi = img.shape[:2]
 
-    # Position the image
+    # 获取目标位置
     x, y = pos
 
-    # Make sure the target position is within the bounds of the picture
+    # 确保目标位置在画布范围内
     if y < 0 or y + hi > picture.shape[0] or x < 0 or x + wi > picture.shape[1]:
         raise ValueError("Blit position is out of bounds")
 
-    # If mask is provided, use it to blend the image onto the picture
+    # 确保输入数据都是 PyTorch 张量且位于 GPU
+    if not isinstance(img, torch.Tensor):
+        img = torch.tensor(img, dtype=torch.uint8, device="cuda")
+    if not isinstance(picture, torch.Tensor):
+        picture = torch.tensor(picture, dtype=torch.uint8, device="cuda")
+    if mask is not None and not isinstance(mask, torch.Tensor):
+        mask = torch.tensor(mask, dtype=torch.uint8, device="cuda")
+
+    # 如果提供了遮罩，则根据遮罩进行混合
     if mask is not None:
-        for i in range(3):  # Iterate over RGB channels
-            picture[y:y+hi, x:x+wi, i] = np.where(
+        # 遮罩需要与图像大小匹配
+        if mask.shape != img.shape[:2]:
+            raise ValueError("Mask size must match the image size")
+        
+        # 混合操作，逐通道处理
+        for i in range(3):  # 遍历 RGB 通道
+            picture[y:y+hi, x:x+wi, i] = torch.where(
                 mask[:hi, :wi] > 0,
-                img[:hi, :wi, i],  # If mask is greater than 0, use img's pixel
-                picture[y:y+hi, x:x+wi, i]  # Else keep the original picture's pixel
+                img[:hi, :wi, i],  # 如果遮罩值大于 0，使用 img 的像素
+                picture[y:y+hi, x:x+wi, i]  # 否则保留原图像像素
             )
     else:
-        # If no mask, simply replace the pixels
+        # 如果没有遮罩，直接替换像素
         picture[y:y+hi, x:x+wi] = img[:hi, :wi]
 
     return picture
 
-def blit_pillow(im1, im2, pos=None, mask=None):
-    """Blit an image over another.
-
-    Blits ``im1`` on ``im2`` as position ``pos=(x,y)``, using the
-    ``mask`` if provided.
-    """
-    if pos is None:
-        pos = (0, 0)  # pragma: no cover
-    else:
-        # Cast to tuple in case pos is not subscriptable.
-        pos = tuple(pos)
-    im2.paste(im1, pos, mask)
-    return im2
 
 
 def color_gradient(
